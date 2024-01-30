@@ -1,0 +1,31 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "COCO BUTD - XE",
+            "type": "python",
+            "request": "launch",
+            "program": "train.py",
+            "args": [
+                "--dataset", "coco",
+                "--dataset_feat_path", "/import/gameai-01/eey362/datasets/coco/data/cocobu_att/",
+                "--dataset_ann_path", "/homes/hps01/ViGCap/data/karpathy_splits/dataset_coco.json",
+                "--exp_name", "debug-coco",
+                "--max_epochs", "5",
+                "--batch_size", "64",
+                "--workers", "4",
+                "--seed", "1234",
+                "--learning_rate", "1",
+                "--dropout", "0.1",
+                "--meshed_emb_size", "2048",
+                "--patience", "-1",
+                "--force_rl_after", "-1"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+    ]
+}

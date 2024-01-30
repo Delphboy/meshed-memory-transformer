@@ -1,84 +1,64 @@
-import random
-from data import ImageDetectionsField, TextField, RawField
-from data import COCO, DataLoader
-import evaluation
-from evaluation import PTBTokenizer, Cider
-from models.transformer import Transformer, MemoryAugmentedEncoder, MeshedDecoder, ScaledDotProductAttentionMemory
-import torch
-from torch.optim import Adam
-from torch.optim.lr_scheduler import LambdaLR
-from torch.nn import NLLLoss
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
-import argparse, os, pickle
-import numpy as np
+import argparse
 import itertools
 import multiprocessing
-from shutil import copyfile
+import os
+import random
 
-random.seed(1234)
-torch.manual_seed(1234)
-np.random.seed(1234)
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn as nn
+from tqdm import tqdm
 
+import evaluation
+from evaluation import Cider, PTBTokenizer
+from utils import factories
 
-def evaluate_loss(model, dataloader, loss_fn, text_field):
-    # Validation loss
-    model.eval()
-    running_loss = .0
-    with tqdm(desc='Epoch %d - validation' % e, unit='it', total=len(dataloader)) as pbar:
-        with torch.no_grad():
-            for it, (detections, captions) in enumerate(dataloader):
-                detections, captions = detections.to(device), captions.to(device)
-                out = model(detections, captions)
-                captions = captions[:, 1:].contiguous()
-                out = out[:, :-1].contiguous()
-                loss = loss_fn(out.view(-1, len(text_field.vocab)), captions.view(-1))
-                this_loss = loss.item()
-                running_loss += this_loss
-
-                pbar.set_postfix(loss=running_loss / (it + 1))
-                pbar.update()
-
-    val_loss = running_loss / len(dataloader)
-    return val_loss
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def evaluate_metrics(model, dataloader, text_field):
-    import itertools
-    model.eval()
-    gen = {}
-    gts = {}
-    with tqdm(desc='Epoch %d - evaluation' % e, unit='it', total=len(dataloader)) as pbar:
-        for it, (images, caps_gt) in enumerate(iter(dataloader)):
-            images = images.to(device)
-            with torch.no_grad():
-                out, _ = model.beam_search(images, 20, text_field.vocab.stoi['<eos>'], 5, out_size=1)
-            caps_gen = text_field.decode(out, join_words=False)
-            for i, (gts_i, gen_i) in enumerate(zip(caps_gt, caps_gen)):
-                gen_i = ' '.join([k for k, g in itertools.groupby(gen_i)])
-                gen['%d_%d' % (it, i)] = [gen_i, ]
-                gts['%d_%d' % (it, i)] = gts_i
-            pbar.update()
+def plot_charts(train_losses, val_losses, val_scores, exp_name: str):
+    val_scores_cider = [s["CIDEr"] * 100 for s in val_scores]
+    val_scores_bleu1 = [s["BLEU"][0] * 100 for s in val_scores]
+    val_scores_bleu4 = [s["BLEU"][3] * 100 for s in val_scores]
 
-    gts = evaluation.PTBTokenizer.tokenize(gts)
-    gen = evaluation.PTBTokenizer.tokenize(gen)
-    scores, _ = evaluation.compute_scores(gts, gen)
-    return scores
+    # Plot losses
+    plt.figure()
+    plt.plot(train_losses, label="Training loss")
+    plt.plot(val_losses, label="Validation loss")
+    plt.legend()
+    plt.title(f"Losses for {exp_name.replace('-', ' ').replace('_', ' ')}")
+    plt.savefig(f"{exp_name}-losses.png")
+
+    # clear figure
+    plt.clf()
+    plt.plot(val_scores_cider, label="Validation CIDEr")
+    plt.plot(val_scores_bleu1, label="Validation BLEU-1")
+    plt.plot(val_scores_bleu4, label="Validation BLEU-4")
+    plt.legend()
+    plt.title(f"Scores for {exp_name.replace('-', ' ').replace('_', ' ')}")
+    plt.savefig(f"{exp_name}-evals.png")
 
 
-def train_xe(model, dataloader, optim, text_field):
-    # Training with cross-entropy
+def train_epoch_xe(model, dataloader, loss_fn, optim, scheduler, epoch, vocab):
     model.train()
     scheduler.step()
-    running_loss = .0
-    with tqdm(desc='Epoch %d - train' % e, unit='it', total=len(dataloader)) as pbar:
-        for it, (detections, captions) in enumerate(dataloader):
-            detections, captions = detections.to(device), captions.to(device)
+    running_loss = 0.0
+
+    desc = "Epoch %d - train" % epoch
+
+    with tqdm(desc=desc, unit="it", total=len(dataloader)) as pbar:
+        for it, (detections, captions, _) in enumerate(dataloader):
+            detections = detections.to(DEVICE)
+            captions = captions.to(DEVICE)
+
             out = model(detections, captions)
+
             optim.zero_grad()
             captions_gt = captions[:, 1:].contiguous()
+
             out = out[:, :-1].contiguous()
-            loss = loss_fn(out.view(-1, len(text_field.vocab)), captions_gt.view(-1))
+            loss = loss_fn(out.view(-1, len(vocab)), captions_gt.view(-1))
             loss.backward()
 
             optim.step()
@@ -89,33 +69,53 @@ def train_xe(model, dataloader, optim, text_field):
             pbar.update()
             scheduler.step()
 
-    loss = running_loss / len(dataloader)
+    loss = running_loss / (it + 1)
     return loss
 
 
-def train_scst(model, dataloader, optim, cider, text_field):
+def train_epoch_scst(model, dataloader, optim, cider, epoch, vocab):
     # Training with self-critical
     tokenizer_pool = multiprocessing.Pool()
-    running_reward = .0
-    running_reward_baseline = .0
+    running_reward = 0.0
+    running_reward_baseline = 0.0
     model.train()
-    running_loss = .0
+    running_loss = 0.0
     seq_len = 20
-    beam_size = 5
+    beam_size = 5  # TODO: make this a parameter with args
 
-    with tqdm(desc='Epoch %d - train' % e, unit='it', total=len(dataloader)) as pbar:
-        for it, (detections, caps_gt) in enumerate(dataloader):
-            detections = detections.to(device)
-            outs, log_probs = model.beam_search(detections, seq_len, text_field.vocab.stoi['<eos>'],
-                                                beam_size, out_size=beam_size)
+    desc = "Epoch %d - train" % epoch
+    with tqdm(desc=desc, unit="it", total=len(dataloader)) as pbar:
+        for it, (detections, _, caps_gt) in enumerate(dataloader):
+            detections = detections.to(DEVICE)
+            outs, log_probs = model.beam_search(
+                detections,
+                seq_len,
+                vocab.vocab.stoi["<eos>"],
+                beam_size,
+                out_size=beam_size,
+            )
             optim.zero_grad()
 
             # Rewards
-            caps_gen = text_field.decode(outs.view(-1, seq_len))
-            caps_gt = list(itertools.chain(*([c, ] * beam_size for c in caps_gt)))
-            caps_gen, caps_gt = tokenizer_pool.map(evaluation.PTBTokenizer.tokenize, [caps_gen, caps_gt])
+            caps_gen = vocab.decode(outs.view(-1, seq_len))
+            caps_gt = list(
+                itertools.chain(
+                    *(
+                        [
+                            c,
+                        ]
+                        * beam_size
+                        for c in caps_gt
+                    )
+                )
+            )
+            caps_gen, caps_gt = tokenizer_pool.map(
+                evaluation.PTBTokenizer.tokenize, [caps_gen, caps_gt]
+            )
             reward = cider.compute_score(caps_gt, caps_gen)[1].astype(np.float32)
-            reward = torch.from_numpy(reward).to(device).view(detections.shape[0], beam_size)
+            reward = (
+                torch.from_numpy(reward).to(DEVICE).view(detections.shape[0], beam_size)
+            )
             reward_baseline = torch.mean(reward, -1, keepdim=True)
             loss = -torch.mean(log_probs, -1) * (reward - reward_baseline)
 
@@ -126,8 +126,11 @@ def train_scst(model, dataloader, optim, cider, text_field):
             running_loss += loss.item()
             running_reward += reward.mean().item()
             running_reward_baseline += reward_baseline.mean().item()
-            pbar.set_postfix(loss=running_loss / (it + 1), reward=running_reward / (it + 1),
-                             reward_baseline=running_reward_baseline / (it + 1))
+            pbar.set_postfix(
+                loss=running_loss / (it + 1),
+                reward=running_reward / (it + 1),
+                reward_baseline=running_reward_baseline / (it + 1),
+            )
             pbar.update()
 
     loss = running_loss / len(dataloader)
@@ -136,188 +139,263 @@ def train_scst(model, dataloader, optim, cider, text_field):
     return loss, reward, reward_baseline
 
 
-if __name__ == '__main__':
-    device = torch.device('cuda')
-    parser = argparse.ArgumentParser(description='Meshed-Memory Transformer')
-    parser.add_argument('--exp_name', type=str, default='m2_transformer')
-    parser.add_argument('--batch_size', type=int, default=10)
-    parser.add_argument('--workers', type=int, default=0)
-    parser.add_argument('--m', type=int, default=40)
-    parser.add_argument('--head', type=int, default=8)
-    parser.add_argument('--warmup', type=int, default=10000)
-    parser.add_argument('--resume_last', action='store_true')
-    parser.add_argument('--resume_best', action='store_true')
-    parser.add_argument('--features_path', type=str)
-    parser.add_argument('--annotation_folder', type=str)
-    parser.add_argument('--logs_folder', type=str, default='tensorboard_logs')
+@torch.no_grad()
+def evaluate_epoch_xe(model, dataloader, loss_fn, epoch, vocab):
+    model.eval()
+    running_loss = 0.0
+
+    desc = "Epoch %d - validation" % epoch
+
+    with tqdm(desc=desc, unit="it", total=len(dataloader)) as pbar:
+        for it, (detections, captions, _) in enumerate(dataloader):
+            detections = detections.to(DEVICE)
+            captions = captions.to(DEVICE)
+
+            out = model(detections, captions)
+            captions_gt = captions[:, 1:].contiguous()
+            out = out[:, :-1].contiguous()
+            loss = loss_fn(out.view(-1, len(vocab)), captions_gt.view(-1))
+            this_loss = loss.item()
+            running_loss += this_loss
+
+            pbar.set_postfix(loss=running_loss / (it + 1))
+            pbar.update()
+
+    loss = running_loss / (it + 1)
+    return loss
+
+
+@torch.no_grad()
+def evaluate_metrics(model, dataloader, text_field, epoch):
+    model.eval()
+    gen = {}
+    gts = {}
+    with tqdm(
+        desc="Epoch %d - evaluation" % epoch, unit="it", total=len(dataloader)
+    ) as pbar:
+        for it, (images, _, caps_gt) in enumerate(iter(dataloader)):
+            images = images.to(DEVICE)
+            with torch.no_grad():
+                out, _ = model.beam_search(
+                    images, 20, text_field.vocab.stoi["<eos>"], 5, out_size=1
+                )
+            caps_gen = text_field.decode(out, join_words=True)
+            for i in range(len(caps_gt)):
+                gen[f"{it}_{i}"] = [caps_gen[i]]
+                gts[f"{it}_{i}"] = [caption for caption in caps_gt[i]]
+            pbar.update()
+
+    print("-" * 10)
+    print(f"Predicted: {gen['0_0']}")
+    print("Ground Truth:")
+    print([f"{g}" for g in gts["0_0"]])
+    print("-" * 10)
+
+    gts = evaluation.PTBTokenizer.tokenize(gts)
+    gen = evaluation.PTBTokenizer.tokenize(gen)
+    scores, _ = evaluation.compute_scores(gts, gen)
+    return scores
+
+
+if __name__ == "__main__":
+    # set up argument parser
+    parser = argparse.ArgumentParser(description="Train a Meshed-Memory model.")
+    # Required arguments
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="coco",
+        required=True,
+        help="Dataset name [coco (default), flickr32k, flickr8k]",
+    )
+    parser.add_argument(
+        "--dataset_feat_path",
+        type=str,
+        default=None,
+        required=True,
+        help="Path to the dataset features",
+    )
+    parser.add_argument(
+        "--dataset_ann_path",
+        type=str,
+        default=None,
+        required=True,
+        help="Path to the dataset annotations",
+    )
+    parser.add_argument(
+        "--feature_limit",
+        type=int,
+        default=50,
+        help="How many features to use per image (default: 50)",
+    )
+    parser.add_argument(
+        "--exp_name",
+        type=str,
+        default=None,
+        required=True,
+        help="Name of the experiment",
+    )
+
+    # Model parameters
+    parser.add_argument("--m", type=int, default=40, help="Number of memory slots")
+    parser.add_argument("--n", type=int, default=3, help="Number of stacked M2 layers")
+    parser.add_argument(
+        "--meshed_emb_size",
+        type=int,
+        default=2048,
+        help="Embedding size for meshed-memory",
+    )
+
+    # Training parameters
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--max_epochs", type=int, default=20, help="maximum epochs")
+    parser.add_argument(
+        "--force_rl_after", type=int, default=-1, help="force RL after (-1 to disable)"
+    )
+    parser.add_argument("--learning_rate", type=float, default=1, help="Learning rate")
+    parser.add_argument("--warmup", type=float, default=10000, help="Warmup steps")
+    parser.add_argument(
+        "--workers", type=int, default=4, help="Number of pytorch dataloader workers"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=-1, help="Random seed (-1) for no seed"
+    )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=5,
+        help="Patience for early stopping (-1 to disable)",
+    )
+    parser.add_argument(
+        "--checkpoint_location",
+        type=str,
+        default="saved_models",
+        help="Path to checkpoint save directory",
+    )
+    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout rate")
+
     args = parser.parse_args()
-    print(args)
 
-    print('Meshed-Memory Transformer Training')
+    # Set random seed
+    if args.seed != -1:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        random.seed(args.seed)
 
-    writer = SummaryWriter(log_dir=os.path.join(args.logs_folder, args.exp_name))
+    if not os.path.exists(args.checkpoint_location):
+        os.makedirs(args.checkpoint_location)
 
-    # Pipeline for image regions
-    image_field = ImageDetectionsField(detections_path=args.features_path, max_detections=50, load_in_tmp=False)
+    # Load dataset
+    train_data, val_data, test_data = factories.get_training_data(args)
+    vocab = train_data.vocab
+    train_dataloader = factories.get_dataloader(
+        train_data, args.batch_size, num_workers=args.workers
+    )
+    val_dataloader = factories.get_dataloader(
+        val_data, args.batch_size, shuffle=False, num_workers=args.workers
+    )
+    test_dataloader = factories.get_dataloader(
+        test_data, args.batch_size, shuffle=False, num_workers=args.workers
+    )
 
-    # Pipeline for text
-    text_field = TextField(init_token='<bos>', eos_token='<eos>', lower=True, tokenize='spacy',
-                           remove_punctuation=True, nopoints=False)
-
-    # Create the dataset
-    dataset = COCO(image_field, text_field, 'coco/images/', args.annotation_folder, args.annotation_folder)
-    train_dataset, val_dataset, test_dataset = dataset.splits
-
-    if not os.path.isfile('vocab_%s.pkl' % args.exp_name):
-        print("Building vocabulary")
-        text_field.build_vocab(train_dataset, val_dataset, min_freq=5)
-        pickle.dump(text_field.vocab, open('vocab_%s.pkl' % args.exp_name, 'wb'))
-    else:
-        text_field.vocab = pickle.load(open('vocab_%s.pkl' % args.exp_name, 'rb'))
-
-    # Model and dataloaders
-    encoder = MemoryAugmentedEncoder(3, 0, attention_module=ScaledDotProductAttentionMemory,
-                                     attention_module_kwargs={'m': args.m})
-    decoder = MeshedDecoder(len(text_field.vocab), 54, 3, text_field.vocab.stoi['<pad>'])
-    model = Transformer(text_field.vocab.stoi['<bos>'], encoder, decoder).to(device)
-
-    dict_dataset_train = train_dataset.image_dictionary({'image': image_field, 'text': RawField()})
-    ref_caps_train = list(train_dataset.text)
+    # SCST Things:
+    scst_train_data, _, _ = factories.get_training_data(args)
+    scst_train_dataloader = factories.get_dataloader(
+        scst_train_data, 2, num_workers=args.workers
+    )
+    ref_caps_train = list(scst_train_data.text)
     cider_train = Cider(PTBTokenizer.tokenize(ref_caps_train))
-    dict_dataset_val = val_dataset.image_dictionary({'image': image_field, 'text': RawField()})
-    dict_dataset_test = test_dataset.image_dictionary({'image': image_field, 'text': RawField()})
 
+    # Load model
+    model = factories.get_model(args, vocab).to(DEVICE)
 
     def lambda_lr(s):
         warm_up = args.warmup
         s += 1
-        return (model.d_model ** -.5) * min(s ** -.5, s * warm_up ** -1.5)
+        return (model.d_model**-0.5) * min(s**-0.5, s * warm_up**-1.5)
 
+    # Set up optimizer
+    optim = torch.optim.Adam(model.parameters(), lr=1, betas=(0.9, 0.98))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda_lr)
 
-    # Initial conditions
-    optim = Adam(model.parameters(), lr=1, betas=(0.9, 0.98))
-    scheduler = LambdaLR(optim, lambda_lr)
-    loss_fn = NLLLoss(ignore_index=text_field.vocab.stoi['<pad>'])
+    loss_fn = nn.NLLLoss(ignore_index=vocab.stoi["<pad>"])
     use_rl = False
-    best_cider = .0
+    best_cider = 0.0
     patience = 0
-    start_epoch = 0
+    training_losses = []
+    training_scores = []
+    validation_losses = []
+    validation_scores = []
 
-    if args.resume_last or args.resume_best:
-        if args.resume_last:
-            fname = 'saved_models/%s_last.pth' % args.exp_name
+    # Training loop
+    for epoch in range(1, args.max_epochs + 1):
+        if use_rl:
+            training_loss, reward, reward_baseline = train_epoch_scst(
+                model, scst_train_dataloader, optim, cider_train, epoch, scst_train_data
+            )
+            print(
+                f"Epoch {epoch} - train loss: {training_loss} - reward: {reward} - reward_baseline: {reward_baseline}"
+            )
         else:
-            fname = 'saved_models/%s_best.pth' % args.exp_name
+            training_loss = train_epoch_xe(
+                model, train_dataloader, loss_fn, optim, scheduler, epoch, vocab
+            )
+        training_losses.append(training_loss)
 
-        if os.path.exists(fname):
-            data = torch.load(fname)
-            torch.set_rng_state(data['torch_rng_state'])
-            torch.cuda.set_rng_state(data['cuda_rng_state'])
-            np.random.set_state(data['numpy_rng_state'])
-            random.setstate(data['random_rng_state'])
-            model.load_state_dict(data['state_dict'], strict=False)
-            optim.load_state_dict(data['optimizer'])
-            scheduler.load_state_dict(data['scheduler'])
-            start_epoch = data['epoch'] + 1
-            best_cider = data['best_cider']
-            patience = data['patience']
-            use_rl = data['use_rl']
-            print('Resuming from epoch %d, validation loss %f, and best cider %f' % (
-                data['epoch'], data['val_loss'], data['best_cider']))
+        # Validation
+        with torch.no_grad():
+            val_loss = evaluate_epoch_xe(model, val_dataloader, loss_fn, epoch, vocab)
+            validation_losses.append(val_loss)
+            scores = evaluate_metrics(model, val_dataloader, train_data, epoch)
+            validation_scores.append(scores)
 
-    print("Training starts")
-    for e in range(start_epoch, start_epoch + 100):
-        dataloader_train = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
-                                      drop_last=True)
-        dataloader_val = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
-        dict_dataloader_train = DataLoader(dict_dataset_train, batch_size=args.batch_size // 5, shuffle=True,
-                                           num_workers=args.workers)
-        dict_dataloader_val = DataLoader(dict_dataset_val, batch_size=args.batch_size // 5)
-        dict_dataloader_test = DataLoader(dict_dataset_test, batch_size=args.batch_size // 5)
+        print(f"Epoch {epoch} - train loss: {training_loss}")
+        print(f"Epoch {epoch} - validation loss: {val_loss}")
+        print(f"Epoch {epoch} - validation scores: {scores}")
 
-        if not use_rl:
-            train_loss = train_xe(model, dataloader_train, optim, text_field)
-            writer.add_scalar('data/train_loss', train_loss, e)
-        else:
-            train_loss, reward, reward_baseline = train_scst(model, dict_dataloader_train, optim, cider_train, text_field)
-            writer.add_scalar('data/train_loss', train_loss, e)
-            writer.add_scalar('data/reward', reward, e)
-            writer.add_scalar('data/reward_baseline', reward_baseline, e)
-
-        # Validation loss
-        val_loss = evaluate_loss(model, dataloader_val, loss_fn, text_field)
-        writer.add_scalar('data/val_loss', val_loss, e)
-
-        # Validation scores
-        scores = evaluate_metrics(model, dict_dataloader_val, text_field)
-        print("Validation scores", scores)
-        val_cider = scores['CIDEr']
-        writer.add_scalar('data/val_cider', val_cider, e)
-        writer.add_scalar('data/val_bleu1', scores['BLEU'][0], e)
-        writer.add_scalar('data/val_bleu4', scores['BLEU'][3], e)
-        writer.add_scalar('data/val_meteor', scores['METEOR'], e)
-        writer.add_scalar('data/val_rouge', scores['ROUGE'], e)
-
-        # Test scores
-        scores = evaluate_metrics(model, dict_dataloader_test, text_field)
-        print("Test scores", scores)
-        writer.add_scalar('data/test_cider', scores['CIDEr'], e)
-        writer.add_scalar('data/test_bleu1', scores['BLEU'][0], e)
-        writer.add_scalar('data/test_bleu4', scores['BLEU'][3], e)
-        writer.add_scalar('data/test_meteor', scores['METEOR'], e)
-        writer.add_scalar('data/test_rouge', scores['ROUGE'], e)
-
-        # Prepare for next epoch
-        best = False
-        if val_cider >= best_cider:
-            best_cider = val_cider
+        cider = scores["CIDEr"]
+        if cider >= best_cider:
+            best_cider = cider
             patience = 0
-            best = True
+            print("Saving best model")
+            save_dir = os.path.join(
+                args.checkpoint_location, args.exp_name + "-best.pt"
+            )
+            torch.save(model.state_dict(), save_dir)
+
         else:
             patience += 1
 
-        switch_to_rl = False
-        exit_train = False
-        if patience == 5:
-            if not use_rl:
-                use_rl = True
-                switch_to_rl = True
-                patience = 0
-                optim = Adam(model.parameters(), lr=5e-6)
+        if patience == args.patience or (epoch == args.force_rl_after and not use_rl):
+            if not use_rl and args.force_rl_after > -1:
                 print("Switching to RL")
+                use_rl = True
+
+                # load best model
+                load_dir = os.path.join(
+                    args.checkpoint_location, args.exp_name + "-best.pt"
+                )
+                model.load_state_dict(torch.load(load_dir))
+
+                optim = torch.optim.Adam(model.parameters(), lr=5e-6)
             else:
-                print('patience reached.')
-                exit_train = True
+                print("Early stopping")
+                break
 
-        if switch_to_rl and not best:
-            data = torch.load('saved_models/%s_best.pth' % args.exp_name)
-            torch.set_rng_state(data['torch_rng_state'])
-            torch.cuda.set_rng_state(data['cuda_rng_state'])
-            np.random.set_state(data['numpy_rng_state'])
-            random.setstate(data['random_rng_state'])
-            model.load_state_dict(data['state_dict'])
-            print('Resuming from epoch %d, validation loss %f, and best cider %f' % (
-                data['epoch'], data['val_loss'], data['best_cider']))
+    # Load best model
+    load_dir = os.path.join(args.checkpoint_location, args.exp_name + "-best.pt")
+    model.load_state_dict(torch.load(load_dir))
 
-        torch.save({
-            'torch_rng_state': torch.get_rng_state(),
-            'cuda_rng_state': torch.cuda.get_rng_state(),
-            'numpy_rng_state': np.random.get_state(),
-            'random_rng_state': random.getstate(),
-            'epoch': e,
-            'val_loss': val_loss,
-            'val_cider': val_cider,
-            'state_dict': model.state_dict(),
-            'optimizer': optim.state_dict(),
-            'scheduler': scheduler.state_dict(),
-            'patience': patience,
-            'best_cider': best_cider,
-            'use_rl': use_rl,
-        }, 'saved_models/%s_last.pth' % args.exp_name)
+    # Evaluate on test set
+    print("*" * 80)
+    with torch.no_grad():
+        scores = evaluate_metrics(model, test_dataloader, test_data, 0)
+        print(f"Test scores: {scores}")
+    print("*" * 80)
 
-        if best:
-            copyfile('saved_models/%s_last.pth' % args.exp_name, 'saved_models/%s_best.pth' % args.exp_name)
-
-        if exit_train:
-            writer.close()
-            break
+    plot_charts(
+        training_losses,
+        validation_losses,
+        validation_scores,
+        args.exp_name,
+    )

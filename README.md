@@ -1,4 +1,10 @@
-# M²: Meshed-Memory Transformer
+# M²: Meshed-Memory Transformer Fork
+- Fixed the `/` vs `//` error in the original code
+- Improved speed of the `Dataset` class
+- **Original Code available:** [https://github.com/aimagelab/meshed-memory-transformer](https://github.com/aimagelab/meshed-memory-transformer)
+
+
+## M²: Meshed-Memory Transformer
 This repository contains the reference code for the paper _[Meshed-Memory Transformer for Image Captioning](https://arxiv.org/abs/1912.08226)_ (CVPR 2020).
 
 Please cite with the following BibTeX:
@@ -16,41 +22,7 @@ Please cite with the following BibTeX:
 </p>
 
 ## Environment setup
-Clone the repository and create the `m2release` conda environment using the `environment.yml` file:
-```
-conda env create -f environment.yml
-conda activate m2release
-```
-
-Then download spacy data by executing the following command:
-```
-python -m spacy download en
-```
-
-Note: Python 3.6 is required to run our code. 
-
-
-## Data preparation
-To run the code, annotations and detection features for the COCO dataset are needed. Please download the annotations file [annotations.zip](https://ailb-web.ing.unimore.it/publicfiles/drive/meshed-memory-transformer/annotations.zip) and extract it.
-
-Detection features are computed with the code provided by [1]. To reproduce our result, please download the COCO features file [coco_detections.hdf5](https://ailb-web.ing.unimore.it/publicfiles/drive/show-control-and-tell/coco_detections.hdf5) (~53.5 GB), in which detections of each image are stored under the `<image_id>_features` key. `<image_id>` is the id of each COCO image, without leading zeros (e.g. the `<image_id>` for `COCO_val2014_000000037209.jpg` is `37209`), and each value should be a `(N, 2048)` tensor, where `N` is the number of detections. 
-
-
-## Evaluation
-To reproduce the results reported in our paper, download the pretrained model file [meshed_memory_transformer.pth](https://ailb-web.ing.unimore.it/publicfiles/drive/meshed-memory-transformer/meshed_memory_transformer.pth) and place it in the code folder.
-
-Run `python test.py` using the following arguments:
-
-| Argument | Possible values |
-|------|------|
-| `--batch_size` | Batch size (default: 10) |
-| `--workers` | Number of workers (default: 0) |
-| `--features_path` | Path to detection features file |
-| `--annotation_folder` | Path to folder with COCO annotations |
-
-#### Expected output
-Under `output_logs/`, you may also find the expected output of the evaluation code.
-
+See `setup.sh`
 
 ## Training procedure
 Run `python train.py` using the following arguments:
