@@ -1,0 +1,60 @@
+#!/bin/bash
+#$ -l h_rt=240:0:0
+#$ -l h_vmem=11G
+#$ -pe smp 8
+#$ -l gpu=1
+#$ -cwd
+#$ -j y
+#$ -N M2 Setup
+
+# Load modules
+module load python/3.8.5
+module load cuda/11.6.2
+module load cudnn/8.4.1-cuda11.6
+module load gcc/6.3.0
+module load java/1.8.0_382-openjdk
+
+# Set up Python environment
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+
+python3 -m pip install torch==1.13.0+cu116 torchvision==0.14.0+cu116 torchaudio==0.13.0 --extra-index-url https://download.pytorch.org/whl/cu116
+python3 -m pip install --no-index pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-1.12.1+cu116.html
+python3 -m pip install torch_geometric
+python3 -m pip install pycocotools
+python3 -m pip install spacy
+python3 -m pip install tqdm
+python3 -m pip install nltk
+python3 -m pip install mosestokenizer
+python3 -m pip install revtok
+python3 -m pip install h5py
+python3 -m pip install timm
+python3 -m pip install tensorboard
+python3 -m pip install scikit-image
+python3 -m pip uninstall urllib3
+python3 -m pip install urllib3==1.26.6
+python -m spacy download en
+
+# Set up data
+mkdir logs
+mkdir data
+cd data
+
+# Download the Karpathy Split JSON
+wget https://github.com/Delphboy/karpathy-splits/raw/main/dataset_coco.json?download= -O dataset_coco.json
+cd ..
+python3 scripts/prepro_labels.py --input_json data/dataset_coco.json --output_json data/cocotalk.json --output_h5 data/cocotalk
+
+# bu data
+mkdir data/bu_data/trainval
+cd data/bu_data/trainval
+cp /data/PublicDataSets/Coco-2014/pretrained/trainval/* .
+cd ../../..
+
+echo "Extracting image features..."
+python3 script/make_bu_data.py --output_dir data/cocobu
+
+
+
+echo "All done"

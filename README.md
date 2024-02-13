@@ -2,7 +2,7 @@
 - Fixed the `/` vs `//` error in the original code
 - Improved speed of the `Dataset` class
 - **Original Code available:** [https://github.com/aimagelab/meshed-memory-transformer](https://github.com/aimagelab/meshed-memory-transformer)
-
+- Added `hpc` scripts and `setup.qsub`
 
 ## M²: Meshed-Memory Transformer
 This repository contains the reference code for the paper _[Meshed-Memory Transformer for Image Captioning](https://arxiv.org/abs/1912.08226)_ (CVPR 2020).
@@ -22,30 +22,17 @@ Please cite with the following BibTeX:
 </p>
 
 ## Environment setup
-See `setup.sh`
+See `setup.qsub`. On QMUL's Apocrita/Andrena hpc system, this job can be automated with the following steps:
+
+1. Change `$USER` to your username
+2. Check the directories are as expected
+3. Run `qsub setup.qsub`
+
 
 ## Training procedure
-Run `python train.py` using the following arguments:
+See `train.py` for the complete list of arguments. An hpc system script has been provided in `hpc/train.qsub`. **Ensure the script is ammeded to account for your username and directory structure.** Submit the job with `qsub train.qsub` from within the `hpc` directory.
 
-| Argument | Possible values |
-|------|------|
-| `--exp_name` | Experiment name|
-| `--batch_size` | Batch size (default: 10) |
-| `--workers` | Number of workers (default: 0) |
-| `--m` | Number of memory vectors (default: 40) |
-| `--head` | Number of heads (default: 8) |
-| `--warmup` | Warmup value for learning rate scheduling (default: 10000) |
-| `--resume_last` | If used, the training will be resumed from the last checkpoint. |
-| `--resume_best` | If used, the training will be resumed from the best checkpoint. |
-| `--features_path` | Path to detection features file |
-| `--annotation_folder` | Path to folder with COCO annotations |
-| `--logs_folder` | Path folder for tensorboard logs (default: "tensorboard_logs")|
-
-For example, to train our model with the parameters used in our experiments, use
-```
-python train.py --exp_name m2_transformer --batch_size 50 --m 40 --head 8 --warmup 10000 --features_path /path/to/features --annotation_folder /path/to/annotations
-```
-
+## Results
 <p align="center">
   <img src="images/results.png" alt="Sample Results" width="850"/>
 </p>
