@@ -166,7 +166,7 @@ def evaluate_epoch_xe(model, dataloader, loss_fn, epoch, vocab):
 
 
 @torch.no_grad()
-def evaluate_metrics(model, dataloader, text_field, epoch):
+def evaluate_metrics(model, dataloader, text_field, epoch, is_test=False):
     model.eval()
     gen = {}
     gts = {}
@@ -193,7 +193,7 @@ def evaluate_metrics(model, dataloader, text_field, epoch):
 
     gts = evaluation.PTBTokenizer.tokenize(gts)
     gen = evaluation.PTBTokenizer.tokenize(gen)
-    scores, _ = evaluation.compute_scores(gts, gen)
+    scores, _ = evaluation.compute_scores(gts, gen, is_test=is_test)
     return scores
 
 
@@ -389,7 +389,7 @@ if __name__ == "__main__":
     # Evaluate on test set
     print("*" * 80)
     with torch.no_grad():
-        scores = evaluate_metrics(model, test_dataloader, test_data, 0)
+        scores = evaluate_metrics(model, test_dataloader, test_data, 0, is_test=True)
         print(f"Test scores: {scores}")
     print("*" * 80)
 
