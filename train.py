@@ -186,11 +186,12 @@ def evaluate_metrics(model, dataloader, text_field, epoch, is_test=False):
                 gts[f"{it}_{i}"] = [caption for caption in caps_gt[i]]
             pbar.update()
 
-    print("-" * 10)
-    print(f"Predicted: {gen['0_0']}")
-    print("Ground Truth:")
-    print([f"{g}" for g in gts["0_0"]])
-    print("-" * 10)
+    if is_test:
+        print("-" * 10)
+        print(f"Predicted: {gen['0_0']}")
+        print("Ground Truth:")
+        print([f"{g}" for g in gts["0_0"]])
+        print("-" * 10)
 
     gts = evaluation.PTBTokenizer.tokenize(gts)
     gen = evaluation.PTBTokenizer.tokenize(gen)

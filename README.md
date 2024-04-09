@@ -3,6 +3,7 @@
 
 ## Fork Contributions
 - Fixed the `/` vs `//` error in the original code [following this discussion](https://github.com/aimagelab/meshed-memory-transformer/issues/82)
+- Fixed the `UserWarning: masked_fill_ received a mask with dtype torch.uint8, this behavior is now deprecated,please use a mask with dtype torch.bool instead.` warning in the attention mechanism
 - Improved speed of the `Dataset` class
 - Added `hpc` scripts and `setup.qsub`
 - Added loss/eval training and validation plot functionality (runs automatically)
