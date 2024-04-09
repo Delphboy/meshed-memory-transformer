@@ -44,7 +44,7 @@ See `setup.qsub`. On QMUL's Apocrita/Andrena hpc system, this job can be automat
 
 
 ## Training procedure
-See `train.py` for the complete list of arguments. An hpc system script has been provided in `hpc/train.qsub`. **Ensure the script is ammeded to account for your username and directory structure.** Submit the job with `qsub train.qsub` from within the `hpc` directory.
+See `train.py` for the complete list of arguments. An hpc system script has been provided in `hpc/train.qsub`. **Ensure the script is ammeded to account for your username and directory structure. i.e. Don't use `$USER$` in the header information.** Submit the job with `qsub train.qsub` from within the `hpc` directory.
 
 ## Results
 <p align="center">

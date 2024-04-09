@@ -109,8 +109,9 @@ def train_epoch_scst(model, dataloader, optim, cider, epoch, vocab):
                     )
                 )
             )
-            caps_gen, caps_gt = tokenizer_pool.map(
-                evaluation.PTBTokenizer.tokenize, [caps_gen, caps_gt]
+            caps_gen, caps_gt = tokenizer_pool.starmap(
+                evaluation.PTBTokenizer.tokenize,
+                zip([caps_gen, caps_gt], itertools.repeat(True)),
             )
             reward = cider.compute_score(caps_gt, caps_gen)[1].astype(np.float32)
             reward = (
@@ -301,7 +302,7 @@ if __name__ == "__main__":
     # SCST Things:
     scst_train_data, _, _ = factories.get_training_data(args)
     scst_train_dataloader = factories.get_dataloader(
-        scst_train_data, 2, num_workers=args.workers
+        scst_train_data, 6, num_workers=args.workers
     )
     ref_caps_train = list(scst_train_data.text)
     cider_train = Cider(PTBTokenizer.tokenize(ref_caps_train))
