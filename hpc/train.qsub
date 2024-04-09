@@ -1,10 +1,10 @@
 #!/bin/bash
-#$ -l h_rt=24:00:00
+#$ -l h_rt=1:00:00
 #$ -l h_vmem=11G
 #$ -pe smp 8
 #$ -l gpu=1
 #$ -l gpu_type=ampere
-#$ -wd /data/home/$USER/meshed-memory-transformer
+#$ -wd /data/home/eey362/meshed-memory-transformer
 #$ -j y
 #$ -m ea
 #$ -o logs/
@@ -29,7 +29,7 @@ python3 train.py --dataset "coco" \
                 --m 40 \
                 --n 3 \
                 --workers 4 \
-                --max_epochs 30 \
+                --max_epochs 10 \
                 --batch_size 64 \
                 --learning_rate 1 \
                 --warmup 10000 \
