@@ -4,7 +4,7 @@
 #$ -pe smp 8
 #$ -l gpu=1
 #$ -l gpu_type=ampere
-#$ -wd /data/home/eey362/meshed-memory-transformer
+#$ -wd /data/home/$USER/meshed-memory-transformer
 #$ -j y
 #$ -m ea
 #$ -o logs/

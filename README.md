@@ -6,6 +6,7 @@
 - Improved speed of the `Dataset` class
 - Added `hpc` scripts and `setup.qsub`
 - Added loss/eval training and validation plot functionality (runs automatically)
+- Added a potential fix to the [`<eos>` bug in SCST](https://github.com/aimagelab/meshed-memory-transformer/issues/46).
 
 ## $\mathcal{M}^2$: Meshed-Memory Transformer
 This repository contains a fork of the reference code for the paper _[Meshed-Memory Transformer for Image Captioning](https://arxiv.org/abs/1912.08226)_ (CVPR 2020).
