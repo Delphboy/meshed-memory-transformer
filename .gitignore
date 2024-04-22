@@ -181,3 +181,4 @@ pyrightconfig.json
 data/
 saved_models/
 logs/
+evaluation/spice/tmp
