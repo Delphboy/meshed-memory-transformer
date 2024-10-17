@@ -4,7 +4,8 @@ from torch.utils.data import DataLoader, Dataset
 
 from dataset.captioning_dataset import Batcher
 from dataset.captioning_dataset import (
-    CaptioningDatasetWithFeatures as CaptioningDataset,
+    # CaptioningDatasetWithFeatures as CaptioningDataset,
+    CaptioningDatasetFromHfpy as CaptioningDataset,
 )
 from dataset.captioning_dataset import Vocab
 from models.captioning_model import CaptioningModel
