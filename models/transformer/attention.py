@@ -242,4 +242,3 @@ class MultiHeadAttention(Module):
             out = self.dropout(out)
             out = self.layer_norm(queries + out)
         return out
-        return out
