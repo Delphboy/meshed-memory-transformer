@@ -180,10 +180,16 @@ def evaluate_metrics(model, dataloader, text_field, epoch, is_test=False):
                 out, _ = model.beam_search(
                     images, 20, text_field.vocab.stoi["<eos>"], 5, out_size=1
                 )
-            caps_gen = text_field.decode(out, join_words=True)
-            for i in range(len(caps_gt)):
-                gen[f"{it}_{i}"] = [caps_gen[i]]
-                gts[f"{it}_{i}"] = [caption for caption in caps_gt[i]]
+            caps_gen = text_field.decode(out, join_words=False)
+            # for i in range(len(caps_gt)):
+            #     gen[f"{it}_{i}"] = [caps_gen[i]]
+            #     gts[f"{it}_{i}"] = [caption for caption in caps_gt[i]]
+            for i, (gts_i, gen_i) in enumerate(zip(caps_gt, caps_gen)):
+                gen_i = " ".join([k for k, g in itertools.groupby(gen_i)])
+                gen["%d_%d" % (it, i)] = [
+                    gen_i,
+                ]
+                gts["%d_%d" % (it, i)] = gts_i
             pbar.update()
 
     if is_test:
