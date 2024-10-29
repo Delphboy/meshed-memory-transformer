@@ -396,7 +396,7 @@ class DuplicatedCaptioningDatasetFromHfpy(Dataset):
 
         captions = self.captions[index]
 
-        caption = self.training_captions[index]
+        caption = "<bos> " + self.training_captions[index] + " <eos>"
         seq = self.vocab.numericalize(caption)
 
         return image[: self.feature_limit], seq, captions
