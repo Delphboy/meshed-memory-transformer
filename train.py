@@ -45,6 +45,9 @@ def train_epoch_xe(model, dataloader, loss_fn, optim, scheduler, epoch, vocab):
     scheduler.step()
     running_loss = 0.0
 
+    print("dataset length:", len(dataloader.dataset))
+    print("dataloader length:", len(dataloader))
+
     desc = "Epoch %d - train" % epoch
 
     with tqdm(desc=desc, unit="it", total=len(dataloader)) as pbar:
@@ -295,6 +298,9 @@ if __name__ == "__main__":
 
     # Load dataset
     train_data, val_data, test_data = factories.get_training_data(args)
+    print("len(train_data)", len(train_data))
+    print("len(val_data)", len(val_data))
+    print("len(test_data)", len(test_data))
     vocab = train_data.vocab
     train_dataloader = factories.get_dataloader(
         train_data, args.batch_size, num_workers=args.workers
@@ -307,11 +313,10 @@ if __name__ == "__main__":
     )
 
     # SCST Things:
-    scst_train_data, _, _ = factories.get_training_data(args)
     scst_train_dataloader = factories.get_dataloader(
-        scst_train_data, 6, num_workers=args.workers
+        train_data, 6, num_workers=args.workers
     )
-    ref_caps_train = list(scst_train_data.text)
+    ref_caps_train = list(train_data.text)
     cider_train = Cider(PTBTokenizer.tokenize(ref_caps_train))
 
     # Load model
